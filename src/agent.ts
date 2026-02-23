@@ -1,28 +1,106 @@
-import { generateText, type LanguageModel } from "ai";
+import { generateText, type LanguageModel, type CoreTool } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { anthropic } from "@ai-sdk/anthropic";
 import { config } from "./config.js";
 import { guddesk } from "./clients/guddesk.js";
-import { searchKb } from "./tools/search-kb.js";
+import { searchKb, refreshKnowledgeBase } from "./tools/search-kb.js";
 import { collectInfo } from "./tools/collect-info.js";
 import { checkSlots } from "./tools/check-slots.js";
 import { bookMeeting } from "./tools/book-meeting.js";
 
-const SYSTEM_PROMPT = `You are a friendly and helpful AI customer agent. Your job is to assist website visitors with their questions and requests.
+/**
+ * Build system prompt dynamically based on which plugins are enabled.
+ */
+function buildSystemPrompt(): string {
+  const capabilities: string[] = [
+    "1. **Answer questions** - Use the search_kb tool to find information from the knowledge base before answering factual questions about the company, products, pricing, or features.",
+  ];
+
+  if (config.gudform.enabled) {
+    capabilities.push(
+      "2. **Collect lead information** - When a visitor is interested and shares their name, email, or company, use the collect_info tool to capture their details as a lead.",
+    );
+  }
+
+  if (config.gudcal.enabled) {
+    capabilities.push(
+      `${config.gudform.enabled ? "3" : "2"}. **Check meeting availability** - Use the check_slots tool when someone wants to schedule a demo or meeting.`,
+    );
+    capabilities.push(
+      `${config.gudform.enabled ? "4" : "3"}. **Book meetings** - Use the book_meeting tool to confirm a booking once you have their name, email, and preferred time.`,
+    );
+  }
+
+  let bookingGuideline = "";
+  if (config.gudcal.enabled) {
+    bookingGuideline =
+      "\n- When someone wants to book a demo: first collect their name and email, then check available slots, let them pick a time, then book it.";
+  }
+
+  return `You are a friendly and helpful AI customer agent. Your job is to assist website visitors with their questions and requests.
 
 You have these capabilities:
-1. **Answer questions** — Use the search_kb tool to find information from the knowledge base before answering factual questions about the company, products, pricing, or features.
-2. **Collect lead information** — When a visitor is interested and shares their name, email, or company, use the collect_info tool to capture their details as a lead.
-3. **Check meeting availability** — Use the check_slots tool when someone wants to schedule a demo or meeting.
-4. **Book meetings** — Use the book_meeting tool to confirm a booking once you have their name, email, and preferred time.
+${capabilities.join("\n")}
 
 Guidelines:
-- Be concise but helpful. Keep responses under 3 sentences unless the visitor needs more detail.
-- When someone wants to book a demo: first collect their name and email, then check available slots, let them pick a time, then book it.
+- Be concise but helpful. Keep responses under 3 sentences unless the visitor needs more detail.${bookingGuideline}
 - If you don't know something and the knowledge base doesn't have the answer, say so honestly and offer to connect them with a human agent.
 - Always use the knowledge base tool before claiming something is or isn't a feature.
 - Don't repeat yourself. If you already have the visitor's info, don't ask for it again.
 - Be conversational and natural — you're chatting, not writing an essay.`;
+}
+
+/**
+ * Build tools object based on which plugins are enabled.
+ */
+function buildTools(): Record<string, CoreTool> {
+  const tools: Record<string, CoreTool> = {
+    search_kb: searchKb,
+  };
+
+  if (config.gudform.enabled) {
+    tools.collect_info = collectInfo;
+  }
+
+  if (config.gudcal.enabled) {
+    tools.check_slots = checkSlots;
+    tools.book_meeting = bookMeeting;
+  }
+
+  return tools;
+}
+
+const SYSTEM_PROMPT = buildSystemPrompt();
+const TOOLS = buildTools();
+
+// Log active capabilities on startup
+const activePlugins = [
+  "Knowledge Base (search_kb)",
+  ...(config.gudform.enabled ? ["Lead Capture (collect_info)"] : []),
+  ...(config.gudcal.enabled
+    ? ["Scheduling (check_slots, book_meeting)"]
+    : []),
+];
+console.log(`Active tools: ${activePlugins.join(", ")}`);
+
+/**
+ * Initialize the agent: refresh KB from GudDesk API (or local fallback).
+ * Call this once during server startup before processing messages.
+ */
+export async function initAgent(): Promise<void> {
+  console.log("Initializing knowledge base...");
+  try {
+    const result = await refreshKnowledgeBase();
+    console.log(
+      `Knowledge base loaded: ${result.count} sections from ${result.source}`,
+    );
+  } catch (err) {
+    console.warn(
+      "KB initialization failed (will retry on first search):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
 
 /**
  * In-memory conversation history per conversation.
@@ -57,12 +135,7 @@ export async function processMessage(
       model: getModel(),
       system: SYSTEM_PROMPT,
       messages: history,
-      tools: {
-        search_kb: searchKb,
-        collect_info: collectInfo,
-        check_slots: checkSlots,
-        book_meeting: bookMeeting,
-      },
+      tools: TOOLS,
       maxSteps: 5,
     });
 

@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { config } from "../config.js";
 import { gudcal } from "../clients/gudcal.js";
 
 /**
@@ -46,6 +47,10 @@ export const checkSlots = tool({
       ),
   }),
   execute: async ({ date, timezone }) => {
+    if (!config.gudcal.enabled) {
+      return { available: false, message: "Scheduling is not configured." };
+    }
+
     try {
       const tz = timezone || "America/New_York";
 

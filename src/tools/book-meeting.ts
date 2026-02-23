@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { config } from "../config.js";
 import { gudcal } from "../clients/gudcal.js";
 
 export const bookMeeting = tool({
@@ -27,6 +28,10 @@ export const bookMeeting = tool({
       ),
   }),
   execute: async ({ startTime, guestName, guestEmail, guestTimezone, notes }) => {
+    if (!config.gudcal.enabled) {
+      return { success: false, message: "Scheduling is not configured." };
+    }
+
     try {
       const result = await gudcal.book({
         startTime,

@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { config } from "../config.js";
 import { gudform } from "../clients/gudform.js";
 
 export const collectInfo = tool({
@@ -18,6 +19,10 @@ export const collectInfo = tool({
       .describe("The visitor's phone number"),
   }),
   execute: async ({ name, email, company, phone }) => {
+    if (!config.gudform.enabled) {
+      return { success: false, message: "Lead capture is not configured." };
+    }
+
     try {
       const answers = gudform.buildAnswers({ name, email, company, phone });
 

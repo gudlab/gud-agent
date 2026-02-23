@@ -1,54 +1,12 @@
 # gud-agent
 
-**Your AI customer agent that answers questions, collects leads, and books meetings.**
+**Turn your website into an AI support agent in 5 minutes.**
 
-Built with [GudDesk](https://github.com/gudlab/guddesk) + [GudCal](https://github.com/gudlab/gudcal) + [GudForm](https://github.com/gudlab/gudform) + [Vercel AI SDK](https://sdk.vercel.ai).
+Crawl your site, build a knowledge base automatically, and let AI answer your customers' questions — powered by [GudDesk](https://github.com/gudlab/guddesk), [Vercel AI SDK](https://sdk.vercel.ai), and optionally [GudCal](https://github.com/gudlab/gudcal) + [GudForm](https://github.com/gudlab/gudform).
 
 ---
 
-## What It Does
-
-`gud-agent` is an AI-powered customer agent that plugs into your GudDesk chat widget. When a visitor sends a message, the agent:
-
-1. **Answers questions** from your knowledge base (a simple Markdown file)
-2. **Captures lead info** (name, email, company) and saves it to GudForm
-3. **Checks available time slots** on GudCal
-4. **Books meetings** directly through the conversation
-
-All of this happens automatically in the chat widget — no human agent needed.
-
-## How It Works
-
-```
-Visitor types in GudDesk chat widget
-              │
-              ▼
-   GudDesk fires webhook ──→ gud-agent server
-                                    │
-                                    ▼
-                           LLM processes message
-                           (with tool calling)
-                                    │
-                    ┌───────────────┼───────────────┐
-                    ▼               ▼               ▼
-              Search KB      Check GudCal     Submit to
-            (Markdown)       availability      GudForm
-                    │               │               │
-                    └───────────────┼───────────────┘
-                                    │
-                                    ▼
-                        Reply via GudDesk API
-                        (appears in widget)
-```
-
 ## Quick Start
-
-### Prerequisites
-
-- [GudDesk](https://github.com/gudlab/guddesk) instance running
-- [GudCal](https://github.com/gudlab/gudcal) instance running
-- [GudForm](https://github.com/gudlab/gudform) instance running
-- OpenAI or Anthropic API key
 
 ### 1. Clone and install
 
@@ -58,81 +16,142 @@ cd gud-agent
 pnpm install
 ```
 
-### 2. Configure
+### 2. Crawl your website
+
+```bash
+pnpm crawl https://your-website.com
+```
+
+This crawls your site and auto-generates `knowledge/base.md` — the AI's knowledge base. No manual writing needed.
+
+```
+  Crawling https://your-website.com...
+
+  [1/20] Home (1,842 chars)
+  [2/20] About Us (2,105 chars)
+  [3/20] Pricing (1,523 chars)
+  [4/20] Features (3,201 chars)
+  [5/20] FAQ (2,890 chars)
+
+  Crawl complete!
+  Pages crawled: 12
+  Word count:    4,521
+  Output:        knowledge/base.md
+```
+
+### 3. Configure
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your credentials:
+Set your **GudDesk URL** and **API key** — that's all you need:
 
 ```env
-# Pick your LLM
 OPENAI_API_KEY=sk-...
-LLM_MODEL=gpt-4o-mini
-
-# Your GudDesk instance
 GUDDESK_URL=https://your-guddesk.com
 GUDDESK_API_KEY=gd_bot_your_app_id
+```
 
-# Your GudCal instance
+### 4. Set up GudDesk webhook
+
+In your GudDesk dashboard, add a webhook pointing to your agent:
+
+```
+POST https://your-agent-url.com/webhook
+```
+
+### 5. Run
+
+```bash
+pnpm dev
+```
+
+That's it! Your AI agent is now answering customer questions in your GudDesk chat widget.
+
+---
+
+## How It Works
+
+```
+Visitor types in GudDesk chat widget
+              |
+              v
+   GudDesk fires webhook --> gud-agent server
+                                    |
+                                    v
+                           LLM processes message
+                           (with tool calling)
+                                    |
+                    +---------------+---------------+
+                    v               v               v
+              Search KB      Check GudCal     Submit to
+          (auto-generated)   availability      GudForm
+                    |               |               |
+                    +---------------+---------------+
+                                    |
+                                    v
+                        Reply via GudDesk API
+                        (appears in widget)
+```
+
+## Crawler Options
+
+```bash
+# Crawl with more pages
+pnpm crawl https://acme.com --max-pages 50
+
+# Exclude specific paths
+pnpm crawl https://acme.com --exclude "/blog,/careers,/legal"
+
+# Custom output path
+pnpm crawl https://acme.com --output my-kb.md
+
+# Slower crawling (be extra polite)
+pnpm crawl https://acme.com --delay 500
+```
+
+The crawler:
+- Follows internal links (same domain only)
+- Extracts readable content using Mozilla Readability
+- Strips navigation, footers, scripts, and boilerplate
+- Generates structured Markdown with sections per page
+- Skips assets, API routes, and admin pages automatically
+
+## Optional Plugins
+
+### Scheduling (GudCal)
+
+Let the agent check availability and book meetings. Add these env vars:
+
+```env
 GUDCAL_URL=https://your-gudcal.com
 GUDCAL_USERNAME=your-username
 GUDCAL_EVENT_SLUG=30-min-demo
 GUDCAL_EVENT_TYPE_ID=your-event-type-uuid
+```
 
-# Your GudForm instance
+The agent gains two tools: `check_slots` and `book_meeting`.
+
+### Lead Capture (GudForm)
+
+Save visitor information as leads. Add these env vars:
+
+```env
 GUDFORM_URL=https://your-gudform.com
 GUDFORM_FORM_ID=your-lead-form-id
 GUDFORM_FIELD_NAME=question-id-for-name
 GUDFORM_FIELD_EMAIL=question-id-for-email
 ```
 
-### 3. Edit your knowledge base
+The agent gains the `collect_info` tool.
 
-Replace `knowledge/base.md` with information about your company, products, pricing, and FAQs.
+## LLM Configuration
 
-### 4. Configure GudDesk webhook
-
-In your GudDesk instance, add a webhook URL pointing to your gud-agent:
-
-```
-POST https://your-gud-agent.com/webhook
-```
-
-Set the webhook to fire on `message.created` events.
-
-### 5. Run
-
-```bash
-# Development
-pnpm dev
-
-# Production
-pnpm build && pnpm start
-```
-
-## LLM Tools
-
-| Tool | Description | Powered By |
-|------|-------------|------------|
-| `search_kb` | Searches the knowledge base for answers | Local Markdown file |
-| `collect_info` | Captures lead information (name, email, company) | GudForm API |
-| `check_slots` | Checks available meeting time slots | GudCal API |
-| `book_meeting` | Books a meeting at a selected time | GudCal API |
-
-The agent uses [Vercel AI SDK](https://sdk.vercel.ai) for LLM-agnostic tool calling. Switch between OpenAI and Anthropic by changing one env var.
-
-## Customization
-
-### Change the knowledge base
-
-Edit `knowledge/base.md` — it's just a Markdown file. The agent splits it by headings and searches for relevant sections based on the visitor's question.
-
-### Change the LLM
+Switch between OpenAI and Anthropic with one env var:
 
 ```env
-# OpenAI
+# OpenAI (default)
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
 
@@ -140,6 +159,12 @@ LLM_MODEL=gpt-4o-mini
 LLM_PROVIDER=anthropic
 LLM_MODEL=claude-sonnet-4-20250514
 ```
+
+## Customization
+
+### Edit the knowledge base
+
+After crawling, review and edit `knowledge/base.md`. It's just Markdown — add FAQs, remove irrelevant sections, or add details the crawler missed.
 
 ### Add custom tools
 
@@ -158,10 +183,8 @@ docker run -p 3001:3001 --env-file .env gud-agent
 
 1. Push to GitHub
 2. Connect your repo
-3. Add environment variables from `.env.example`
+3. Set environment variables
 4. Deploy
-
-The server listens on the `PORT` environment variable (defaults to 3001).
 
 ## Architecture
 
@@ -171,17 +194,23 @@ gud-agent/
 │   ├── index.ts              # Express server + webhook handler
 │   ├── agent.ts              # LLM agent with tool calling
 │   ├── config.ts             # Environment configuration
+│   ├── cli/
+│   │   └── crawl.ts          # Website crawler CLI
+│   ├── crawler/
+│   │   ├── index.ts          # BFS site crawler
+│   │   ├── extractor.ts      # Readability content extraction
+│   │   └── markdown.ts       # KB markdown generator
 │   ├── tools/
 │   │   ├── search-kb.ts      # Knowledge base search
-│   │   ├── collect-info.ts   # Lead capture via GudForm
-│   │   ├── check-slots.ts    # Availability via GudCal
-│   │   └── book-meeting.ts   # Booking via GudCal
+│   │   ├── collect-info.ts   # Lead capture (GudForm)
+│   │   ├── check-slots.ts    # Availability (GudCal)
+│   │   └── book-meeting.ts   # Booking (GudCal)
 │   └── clients/
 │       ├── guddesk.ts        # GudDesk API client
 │       ├── gudcal.ts         # GudCal API client
 │       └── gudform.ts        # GudForm API client
 ├── knowledge/
-│   └── base.md               # Your knowledge base (edit this!)
+│   └── base.md               # Auto-generated knowledge base
 ├── .env.example
 ├── Dockerfile
 └── package.json
@@ -189,11 +218,12 @@ gud-agent/
 
 ## Built With
 
-- [GudDesk](https://github.com/gudlab/guddesk) — Open-source customer support with live chat widget
-- [GudCal](https://github.com/gudlab/gudcal) — Open-source scheduling and calendar booking
-- [GudForm](https://github.com/gudlab/gudform) — Open-source form builder
-- [Vercel AI SDK](https://sdk.vercel.ai) — LLM-agnostic AI toolkit
-- [Express](https://expressjs.com) — Minimal Node.js server
+- [GudDesk](https://github.com/gudlab/guddesk) - Open-source customer support with live chat widget
+- [GudCal](https://github.com/gudlab/gudcal) - Open-source scheduling and calendar booking
+- [GudForm](https://github.com/gudlab/gudform) - Open-source form builder
+- [Vercel AI SDK](https://sdk.vercel.ai) - LLM-agnostic AI toolkit
+- [Mozilla Readability](https://github.com/mozilla/readability) - Content extraction
+- [Cheerio](https://cheerio.js.org) - HTML parsing
 
 ## License
 

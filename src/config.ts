@@ -10,29 +10,50 @@ function optional(name: string, fallback: string): string {
   return process.env[name] || fallback;
 }
 
+function optionalOrNull(name: string): string | null {
+  return process.env[name] || null;
+}
+
+// GudCal is enabled only when all required vars are set
+const gudcalUrl = optionalOrNull("GUDCAL_URL");
+const gudcalUsername = optionalOrNull("GUDCAL_USERNAME");
+const gudcalEventSlug = optionalOrNull("GUDCAL_EVENT_SLUG");
+const gudcalEventTypeId = optionalOrNull("GUDCAL_EVENT_TYPE_ID");
+const gudcalEnabled = !!(gudcalUrl && gudcalUsername && gudcalEventSlug && gudcalEventTypeId);
+
+// GudForm is enabled only when URL and form ID are set
+const gudformUrl = optionalOrNull("GUDFORM_URL");
+const gudformFormId = optionalOrNull("GUDFORM_FORM_ID");
+const gudformEnabled = !!(gudformUrl && gudformFormId);
+
+const port = parseInt(optional("PORT", "3001"), 10);
+
 export const config = {
   // LLM
   llmProvider: optional("LLM_PROVIDER", "openai") as "openai" | "anthropic",
   llmModel: optional("LLM_MODEL", "gpt-4o-mini"),
 
-  // GudDesk
+  // GudDesk (API key required, URL defaults to hosted platform)
+  // Self-hosted users can override with GUDDESK_URL
   guddesk: {
-    url: required("GUDDESK_URL"),
+    url: optional("GUDDESK_URL", "https://guddesk.com"),
     apiKey: required("GUDDESK_API_KEY"),
   },
 
-  // GudCal
+  // GudCal (optional — scheduling plugin)
   gudcal: {
-    url: required("GUDCAL_URL"),
-    username: required("GUDCAL_USERNAME"),
-    eventSlug: required("GUDCAL_EVENT_SLUG"),
-    eventTypeId: required("GUDCAL_EVENT_TYPE_ID"),
+    enabled: gudcalEnabled,
+    url: gudcalUrl ?? "",
+    username: gudcalUsername ?? "",
+    eventSlug: gudcalEventSlug ?? "",
+    eventTypeId: gudcalEventTypeId ?? "",
   },
 
-  // GudForm
+  // GudForm (optional — lead capture plugin)
   gudform: {
-    url: required("GUDFORM_URL"),
-    formId: required("GUDFORM_FORM_ID"),
+    enabled: gudformEnabled,
+    url: gudformUrl ?? "",
+    formId: gudformFormId ?? "",
     fields: {
       name: optional("GUDFORM_FIELD_NAME", ""),
       email: optional("GUDFORM_FIELD_EMAIL", ""),
@@ -42,6 +63,9 @@ export const config = {
   },
 
   // Server
-  port: parseInt(optional("PORT", "3001"), 10),
+  port,
   webhookSecret: optional("WEBHOOK_SECRET", ""),
+
+  // Public URL of this agent (for webhook auto-registration)
+  agentUrl: optionalOrNull("AGENT_URL"),
 } as const;

@@ -3,40 +3,151 @@ import { z } from "zod";
 import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { guddesk, type GudDeskArticle } from "../clients/guddesk.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Load knowledge base once at startup
-let knowledgeBase = "";
-try {
-  knowledgeBase = readFileSync(
-    join(__dirname, "../../knowledge/base.md"),
-    "utf-8",
-  );
-} catch {
-  console.warn("Warning: knowledge/base.md not found. KB search will return no results.");
+// ── Knowledge sections cache ──────────────────────────
+interface KBSection {
+  heading: string;
+  content: string;
+  source: "api" | "local";
+}
+
+let sections: KBSection[] = [];
+let lastRefresh = 0;
+
+/**
+ * Refresh the knowledge base from GudDesk API.
+ * Falls back to the local markdown file if the API is unreachable.
+ */
+export async function refreshKnowledgeBase(): Promise<{
+  source: "api" | "local";
+  count: number;
+}> {
+  try {
+    const articles = await guddesk.listArticles({ published: true });
+
+    if (articles.length > 0) {
+      sections = articlesToSections(articles);
+      lastRefresh = Date.now();
+      return { source: "api", count: sections.length };
+    }
+  } catch (err) {
+    console.warn(
+      "KB refresh from API failed, falling back to local file:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // Fallback: load from local markdown file
+  const localSections = loadLocalKnowledgeBase();
+  if (localSections.length > 0) {
+    sections = localSections;
+    lastRefresh = Date.now();
+    return { source: "local", count: sections.length };
+  }
+
+  return { source: "local", count: 0 };
 }
 
 /**
- * Split the knowledge base into sections by headings.
- * Each section includes its heading hierarchy for context.
+ * Convert GudDesk articles into searchable KB sections.
+ * Each article becomes one section; long articles are split by headings.
  */
-function getSections(): { heading: string; content: string }[] {
-  if (!knowledgeBase) return [];
+function articlesToSections(articles: GudDeskArticle[]): KBSection[] {
+  const result: KBSection[] = [];
 
-  const sections: { heading: string; content: string }[] = [];
-  const lines = knowledgeBase.split("\n");
+  for (const article of articles) {
+    const body = article.body ?? "";
+
+    if (!body.trim()) {
+      // Article with no body — just use excerpt
+      if (article.excerpt) {
+        result.push({
+          heading: article.title,
+          content: article.excerpt,
+          source: "api",
+        });
+      }
+      continue;
+    }
+
+    // Split article body by headings (##, ###)
+    const lines = body.split("\n");
+    let currentHeading = article.title;
+    let currentContent: string[] = [];
+
+    for (const line of lines) {
+      const headingMatch = line.match(/^#{1,3}\s+(.+)/);
+      if (headingMatch) {
+        // Save previous section
+        if (currentContent.length > 0) {
+          const content = currentContent.join("\n").trim();
+          if (content) {
+            result.push({
+              heading: currentHeading,
+              content,
+              source: "api",
+            });
+          }
+        }
+        currentHeading = `${article.title} > ${headingMatch[1]}`;
+        currentContent = [];
+      } else {
+        currentContent.push(line);
+      }
+    }
+
+    // Save last section
+    if (currentContent.length > 0) {
+      const content = currentContent.join("\n").trim();
+      if (content) {
+        result.push({
+          heading: currentHeading,
+          content,
+          source: "api",
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Load knowledge base from local markdown file (fallback).
+ */
+function loadLocalKnowledgeBase(): KBSection[] {
+  try {
+    const markdown = readFileSync(
+      join(__dirname, "../../knowledge/base.md"),
+      "utf-8",
+    );
+    return parseMarkdownSections(markdown);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Split markdown content into sections by headings.
+ */
+function parseMarkdownSections(markdown: string): KBSection[] {
+  if (!markdown) return [];
+
+  const result: KBSection[] = [];
+  const lines = markdown.split("\n");
   let currentHeading = "General";
   let currentContent: string[] = [];
 
   for (const line of lines) {
     const headingMatch = line.match(/^#{1,3}\s+(.+)/);
     if (headingMatch) {
-      // Save previous section
       if (currentContent.length > 0) {
         const content = currentContent.join("\n").trim();
         if (content) {
-          sections.push({ heading: currentHeading, content });
+          result.push({ heading: currentHeading, content, source: "local" });
         }
       }
       currentHeading = headingMatch[1];
@@ -46,25 +157,21 @@ function getSections(): { heading: string; content: string }[] {
     }
   }
 
-  // Save last section
   if (currentContent.length > 0) {
     const content = currentContent.join("\n").trim();
     if (content) {
-      sections.push({ heading: currentHeading, content });
+      result.push({ heading: currentHeading, content, source: "local" });
     }
   }
 
-  return sections;
+  return result;
 }
 
 /**
  * Simple keyword-based relevance scoring.
  * Scores each section based on how many query terms appear in it.
  */
-function scoreSection(
-  section: { heading: string; content: string },
-  query: string,
-): number {
+function scoreSection(section: KBSection, query: string): number {
   const terms = query
     .toLowerCase()
     .split(/\s+/)
@@ -83,6 +190,9 @@ function scoreSection(
   return score;
 }
 
+// ── Refresh interval: auto-refresh every 5 minutes ────
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+
 export const searchKb = tool({
   description:
     "Search the knowledge base for information to answer customer questions. Use this when the customer asks about the company, products, pricing, features, or anything that might be documented.",
@@ -92,7 +202,14 @@ export const searchKb = tool({
       .describe("The search query — what the customer is asking about"),
   }),
   execute: async ({ query }) => {
-    const sections = getSections();
+    // Auto-refresh if stale (>5min since last refresh)
+    if (Date.now() - lastRefresh > REFRESH_INTERVAL_MS) {
+      try {
+        await refreshKnowledgeBase();
+      } catch {
+        // Non-fatal — use whatever sections we have cached
+      }
+    }
 
     if (sections.length === 0) {
       return {
