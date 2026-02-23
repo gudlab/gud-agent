@@ -1,10 +1,17 @@
+import "dotenv/config";
+
 import crypto from "crypto";
 
+import * as ngrok from "@ngrok/ngrok";
 import express from "express";
 
 import { processMessage, initAgent } from "./agent.js";
 import { guddesk } from "./clients/guddesk.js";
 import { config } from "./config.js";
+
+let ngrokListener: ngrok.Listener | null = null;
+/** Set when webhook is registered (from AGENT_URL or ngrok tunnel). Used for unregister on shutdown. */
+let registeredWebhookUrl: string | null = null;
 
 const app = express();
 
@@ -22,6 +29,7 @@ let webhookSigningSecret: string = config.webhookSecret;
 
 /**
  * Verify the HMAC signature sent by GudDesk in the X-GudDesk-Signature header.
+ * GudDesk sends: X-GudDesk-Signature: sha256=<hex>
  */
 function verifySignature(
   req: express.Request & { rawBody?: Buffer },
@@ -31,10 +39,15 @@ function verifySignature(
   const signature = req.headers["x-guddesk-signature"] as string | undefined;
   if (!signature) return false;
 
-  const expected = crypto
+  const expectedHex = crypto
     .createHmac("sha256", webhookSigningSecret)
     .update(req.rawBody || "")
     .digest("hex");
+
+  // GudDesk sends "sha256=<hex>", so compare with the same prefix
+  const expected = `sha256=${expectedHex}`;
+
+  if (signature.length !== expected.length) return false;
 
   return crypto.timingSafeEqual(
     Buffer.from(signature),
@@ -71,7 +84,7 @@ app.post("/webhook", (req: express.Request & { rawBody?: Buffer }, res) => {
     return;
   }
 
-  const { conversationId, body, visitorEmail } = data;
+  const { conversationId, body, assigneeId } = data;
 
   if (!conversationId || !body) {
     res.status(400).json({ error: "Missing conversationId or body" });
@@ -82,7 +95,7 @@ app.post("/webhook", (req: express.Request & { rawBody?: Buffer }, res) => {
   res.json({ status: "processing" });
 
   // Fire-and-forget — process in the background
-  processMessage(conversationId, body, visitorEmail).catch((err) => {
+  processMessage(conversationId, body, { assigneeId }).catch((err) => {
     console.error(`Failed to process message for ${conversationId}:`, err);
   });
 });
@@ -91,7 +104,30 @@ app.post("/webhook", (req: express.Request & { rawBody?: Buffer }, res) => {
 // Start server + auto-register webhook
 // ---------------------------------------------------------------------------
 const server = app.listen(config.port, async () => {
-  const agentUrl = config.agentUrl;
+  let agentUrl: string | null = config.agentUrl;
+
+  // Start ngrok tunnel if enabled (overrides AGENT_URL with tunnel URL)
+  if (config.ngrokEnabled) {
+    try {
+      if (!process.env.NGROK_AUTHTOKEN) {
+        console.error(
+          "  ❌ NGROK_ENABLED is set but NGROK_AUTHTOKEN is missing. Get one at https://dashboard.ngrok.com/get-started/your-authtoken",
+        );
+      } else {
+        ngrokListener = await ngrok.forward({
+          addr: config.port,
+          authtoken_from_env: true,
+        });
+        const tunnelUrl = ngrokListener.url();
+        if (tunnelUrl) {
+          agentUrl = tunnelUrl.replace(/\/$/, "");
+          console.log(`  🌐 Ngrok tunnel: ${agentUrl}\n`);
+        }
+      }
+    } catch (err) {
+      console.error("  ❌ Ngrok failed to start:", err instanceof Error ? err.message : err);
+    }
+  }
 
   console.log(`
   ┌─────────────────────────────────────────┐
@@ -108,9 +144,10 @@ const server = app.listen(config.port, async () => {
   └─────────────────────────────────────────┘
   `);
 
-  // Auto-register webhook if AGENT_URL is set
+  // Auto-register webhook if AGENT_URL is set (or from ngrok)
   if (agentUrl) {
     const webhookUrl = `${agentUrl.replace(/\/$/, "")}/webhook`;
+    registeredWebhookUrl = webhookUrl;
     try {
       console.log(`  📡 Registering webhook → ${webhookUrl}`);
       const result = await guddesk.registerWebhook(webhookUrl);
@@ -126,10 +163,11 @@ const server = app.listen(config.port, async () => {
     } catch (err) {
       console.error(`  ❌ Webhook registration failed:`, err);
       console.log(`  ⚠  You'll need to add the webhook manually in GudDesk settings\n`);
+      registeredWebhookUrl = null;
     }
   } else {
     console.log(`  ℹ  AGENT_URL not set — skipping webhook auto-registration`);
-    console.log(`     Set AGENT_URL to your public URL to enable auto-setup\n`);
+    console.log(`     Set AGENT_URL or NGROK_ENABLED=true (with NGROK_AUTHTOKEN) to enable auto-setup\n`);
   }
 
   // Load knowledge base from GudDesk API (or local fallback)
@@ -142,16 +180,25 @@ const server = app.listen(config.port, async () => {
 async function shutdown() {
   console.log("\n  🛑 Shutting down...");
 
-  const agentUrl = config.agentUrl;
-  if (agentUrl) {
-    const webhookUrl = `${agentUrl.replace(/\/$/, "")}/webhook`;
+  if (ngrokListener) {
     try {
-      console.log(`  📡 Unregistering webhook → ${webhookUrl}`);
-      await guddesk.unregisterWebhook(webhookUrl);
+      await ngrokListener.close();
+      console.log("  ✅ Ngrok tunnel closed");
+    } catch {
+      // best-effort
+    }
+    ngrokListener = null;
+  }
+
+  if (registeredWebhookUrl) {
+    try {
+      console.log(`  📡 Unregistering webhook → ${registeredWebhookUrl}`);
+      await guddesk.unregisterWebhook(registeredWebhookUrl);
       console.log(`  ✅ Webhook removed`);
     } catch {
       // Best-effort — don't block shutdown
     }
+    registeredWebhookUrl = null;
   }
 
   server.close(() => {

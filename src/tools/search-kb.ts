@@ -20,18 +20,44 @@ let lastRefresh = 0;
 /**
  * Refresh the knowledge base from GudDesk API.
  * Falls back to the local markdown file if the API is unreachable.
+ *
+ * The list endpoint doesn't include article body, so we fetch each
+ * article individually for full content (concurrency-limited).
  */
 export async function refreshKnowledgeBase(): Promise<{
   source: "api" | "local";
   count: number;
 }> {
   try {
-    const articles = await guddesk.listArticles({ published: true });
+    // Step 1: List published articles (lightweight, no body)
+    const articleList = await guddesk.listArticles({ published: true });
 
-    if (articles.length > 0) {
-      sections = articlesToSections(articles);
-      lastRefresh = Date.now();
-      return { source: "api", count: sections.length };
+    if (articleList.length > 0) {
+      // Step 2: Fetch full article content in parallel (batches of 5)
+      const fullArticles: GudDeskArticle[] = [];
+      const BATCH_SIZE = 5;
+
+      for (let i = 0; i < articleList.length; i += BATCH_SIZE) {
+        const batch = articleList.slice(i, i + BATCH_SIZE);
+        const results = await Promise.allSettled(
+          batch.map((a) => guddesk.getArticle(a.id)),
+        );
+
+        for (const result of results) {
+          if (result.status === "fulfilled") {
+            fullArticles.push(result.value);
+          }
+        }
+      }
+
+      if (fullArticles.length > 0) {
+        sections = articlesToSections(fullArticles);
+        lastRefresh = Date.now();
+        console.log(
+          `  Fetched ${fullArticles.length}/${articleList.length} articles from API`,
+        );
+        return { source: "api", count: sections.length };
+      }
     }
   } catch (err) {
     console.warn(

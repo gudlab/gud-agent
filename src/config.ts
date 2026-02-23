@@ -28,10 +28,20 @@ const gudformEnabled = !!(gudformUrl && gudformFormId);
 
 const port = parseInt(optional("PORT", "3001"), 10);
 
+const ngrokRaw = optionalOrNull("NGROK_ENABLED");
+const ngrokEnabled =
+  ngrokRaw !== null &&
+  /^(1|true|yes)$/i.test(ngrokRaw.trim());
+
 export const config = {
   // LLM
   llmProvider: optional("LLM_PROVIDER", "openai") as "openai" | "anthropic",
-  llmModel: optional("LLM_MODEL", "gpt-4o-mini"),
+  llmModel: optional(
+    "LLM_MODEL",
+    (process.env.LLM_PROVIDER ?? "openai") === "anthropic"
+      ? "claude-sonnet-4-20250514"
+      : "gpt-4o-mini",
+  ),
 
   // GudDesk (API key required, URL defaults to hosted platform)
   // Self-hosted users can override with GUDDESK_URL
@@ -68,4 +78,8 @@ export const config = {
 
   // Public URL of this agent (for webhook auto-registration)
   agentUrl: optionalOrNull("AGENT_URL"),
+
+  // Ngrok: when enabled, tunnel starts on boot and agentUrl is set from tunnel URL
+  // Requires NGROK_AUTHTOKEN in env (see https://dashboard.ngrok.com/get-started/your-authtoken)
+  ngrokEnabled,
 } as const;

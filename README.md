@@ -55,11 +55,10 @@ GUDDESK_API_KEY=gd_bot_your_app_id
 
 ### 4. Set up GudDesk webhook
 
-In your GudDesk dashboard, add a webhook pointing to your agent:
+Either set a public URL for your agent, or use ngrok (see below) so the agent can auto-register the webhook.
 
-```
-POST https://your-agent-url.com/webhook
-```
+- **Option A — Manual:** In GudDesk, add a webhook: `POST https://your-agent-url.com/webhook`
+- **Option B — Ngrok (local dev):** Set `NGROK_ENABLED=true` and `NGROK_AUTHTOKEN=...` in `.env`. On start, a tunnel is created and the webhook is registered automatically.
 
 ### 5. Run
 
@@ -178,6 +177,13 @@ Create a new file in `src/tools/` using the Vercel AI SDK `tool()` function, the
 docker build -t gud-agent .
 docker run -p 3001:3001 --env-file .env gud-agent
 ```
+
+To expose the agent via ngrok from Docker, set in `.env`:
+
+- `NGROK_ENABLED=true` (or `1` / `yes`)
+- `NGROK_AUTHTOKEN=<your-token>` from [dashboard.ngrok.com](https://dashboard.ngrok.com/get-started/your-authtoken)
+
+The tunnel starts on server boot and the GudDesk webhook is registered with the ngrok URL automatically.
 
 ### Railway / Render / Fly.io
 

@@ -120,12 +120,26 @@ function getModel(): LanguageModel {
 
 /**
  * Process an incoming visitor message and send a reply.
+ *
+ * Skips processing when a human agent is assigned (assigneeId present
+ * in the webhook payload) — the human handles the conversation.
  */
 export async function processMessage(
   conversationId: string,
   message: string,
-  _visitorEmail?: string,
+  opts?: { visitorEmail?: string; assigneeId?: string | null },
 ): Promise<void> {
+  // Skip if a human agent is assigned to this conversation
+  if (opts?.assigneeId) {
+    console.log(
+      `[${conversationId}] Skipping — human agent assigned (${opts.assigneeId})`,
+    );
+    return;
+  }
+
+  // Show typing indicator in the widget
+  await guddesk.sendTyping(conversationId, true);
+
   // Get or create conversation history
   const history = conversationHistory.get(conversationId) ?? [];
   history.push({ role: "user", content: message });
@@ -148,12 +162,24 @@ export async function processMessage(
       conversationHistory.set(conversationId, history.slice(-30));
     }
 
-    // Send reply back to GudDesk
-    await guddesk.reply(conversationId, text);
+    // Send reply back to GudDesk (also stops typing indicator server-side)
+    const result = await guddesk.reply(conversationId, text);
+
+    if (result.skipped) {
+      console.log(
+        `[${conversationId}] Reply skipped by server: ${result.reason}`,
+      );
+      // Stop typing since the reply was skipped
+      await guddesk.sendTyping(conversationId, false);
+      return;
+    }
 
     console.log(`[${conversationId}] Replied: ${text.slice(0, 100)}...`);
   } catch (error) {
     console.error(`[${conversationId}] Error processing message:`, error);
+
+    // Stop typing on error
+    await guddesk.sendTyping(conversationId, false);
 
     // Try to send a fallback message
     try {
