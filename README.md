@@ -1,8 +1,12 @@
 # gud-agent
 
-**Turn your website into an AI support agent in 5 minutes.**
+MIT webhook adapter for [GudDesk](https://guddesk.com). Crawl a site into a knowledge base, then answer visitors through the GudDesk chat widget.
 
-Crawl your site, build a knowledge base automatically, and let AI answer your customers' questions — powered by [GudDesk](https://github.com/gudlab/guddesk), [Vercel AI SDK](https://sdk.vercel.ai), and optionally [GudCal](https://github.com/gudlab/gudcal) + [GudForm](https://github.com/gudlab/gudform).
+This is a small companion service, not a separate cloud product. Bundle it with Desk if you need AI replies; there is no third checkout.
+
+Public source for Desk: [gudlab/guddesk-core](https://github.com/gudlab/guddesk-core) (AGPL-3.0). Optional tools talk to [GudCal](https://gudcal.com) ([gudcal-core](https://github.com/gudlab/gudcal-core)) and [GudForm](https://gudform.com) ([gudform-core](https://github.com/gudlab/gudform-core)).
+
+Star this repo if the adapter is useful: [gudlab/gud-agent](https://github.com/gudlab/gud-agent).
 
 ---
 
@@ -53,9 +57,11 @@ GUDDESK_URL=https://your-guddesk.com
 GUDDESK_API_KEY=gd_bot_your_app_id
 ```
 
+Hosted Desk is [guddesk.com](https://guddesk.com). Self-host from [guddesk-core](https://github.com/gudlab/guddesk-core) and point `GUDDESK_URL` at that instance.
+
 ### 4. Set up GudDesk webhook
 
-Either set a public URL for your agent, or use ngrok (see below) so the agent can auto-register the webhook.
+Either set a public URL for your agent, or use ngrok (see below) so the agent can auto-register the webhook (`POST /api/agent/webhooks` on Desk).
 
 - **Option A — Manual:** In GudDesk, add a webhook: `POST https://your-agent-url.com/webhook`
 - **Option B — Ngrok (local dev):** Set `NGROK_ENABLED=true` and `NGROK_AUTHTOKEN=...` in `.env`. On start, a tunnel is created and the webhook is registered automatically.
@@ -130,6 +136,8 @@ GUDCAL_EVENT_SLUG=30-min-demo
 GUDCAL_EVENT_TYPE_ID=your-event-type-uuid
 ```
 
+Public source: [gudlab/gudcal-core](https://github.com/gudlab/gudcal-core). Hosted: [gudcal.com](https://gudcal.com).
+
 The agent gains two tools: `check_slots` and `book_meeting`.
 
 ### Lead Capture (GudForm)
@@ -142,6 +150,8 @@ GUDFORM_FORM_ID=your-lead-form-id
 GUDFORM_FIELD_NAME=question-id-for-name
 GUDFORM_FIELD_EMAIL=question-id-for-email
 ```
+
+Public source: [gudlab/gudform-core](https://github.com/gudlab/gudform-core). Hosted: [gudform.com](https://gudform.com).
 
 The agent gains the `collect_info` tool.
 
@@ -217,6 +227,7 @@ gud-agent/
 │       └── gudform.ts        # GudForm API client
 ├── knowledge/
 │   └── base.md               # Auto-generated knowledge base
+├── LICENSE                   # MIT
 ├── .env.example
 ├── Dockerfile
 └── package.json
@@ -224,13 +235,15 @@ gud-agent/
 
 ## Built With
 
-- [GudDesk](https://github.com/gudlab/guddesk) - Open-source customer support with live chat widget
-- [GudCal](https://github.com/gudlab/gudcal) - Open-source scheduling and calendar booking
-- [GudForm](https://github.com/gudlab/gudform) - Open-source form builder
-- [Vercel AI SDK](https://sdk.vercel.ai) - LLM-agnostic AI toolkit
-- [Mozilla Readability](https://github.com/mozilla/readability) - Content extraction
-- [Cheerio](https://cheerio.js.org) - HTML parsing
+- [GudDesk](https://guddesk.com) — public source [gudlab/guddesk-core](https://github.com/gudlab/guddesk-core) (AGPL-3.0)
+- [GudCal](https://gudcal.com) — public source [gudlab/gudcal-core](https://github.com/gudlab/gudcal-core)
+- [GudForm](https://gudform.com) — public source [gudlab/gudform-core](https://github.com/gudlab/gudform-core)
+- [Vercel AI SDK](https://sdk.vercel.ai) — LLM-agnostic AI toolkit
+- [Mozilla Readability](https://github.com/mozilla/readability) — Content extraction
+- [Cheerio](https://cheerio.js.org) — HTML parsing
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
+
+GudDesk is AGPL-3.0 (`guddesk-core`). This adapter is a separate MIT service that calls Desk over HTTP.
